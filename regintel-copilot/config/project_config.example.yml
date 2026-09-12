@@ -1,0 +1,34 @@
+# RegIntel Copilot - Project Configuration Example
+# Copy to project_config.yml and fill in your values.
+# Do NOT commit project_config.yml — it is in .gitignore.
+
+snowflake:
+  database: REGINTEL
+  warehouse: COMPUTE_WH
+  schemas:
+    raw: RAW
+    curated: CURATED
+    policy: POLICY
+    risk: RISK
+    case_mgmt: CASE_MGMT
+    audit: AUDIT
+    app: APP
+
+roles:
+  admin: REGINTEL_ADMIN
+  engineer: REGINTEL_ENGINEER
+  analyst: REGINTEL_ANALYST
+  compliance_reviewer: REGINTEL_COMPLIANCE_REVIEWER
+  executive_viewer: REGINTEL_EXECUTIVE_VIEWER
+  app_role: REGINTEL_APP_ROLE
+
+data_generation:
+  customer_count: 500
+  account_count: 700
+  transaction_days: 90
+  suspicious_scenarios: 25
+  random_seed: 42
+
+demo:
+  pinned_account_id: A000123
+  pinned_case_id: C000017

@@ -1,0 +1,479 @@
+"""
+RegIntel Copilot - Risk, Fraud and Regulatory Intelligence Copilot
+Streamlit in Snowflake application with Cortex AI integration.
+"""
+import streamlit as st
+from snowflake.snowpark.context import get_active_session
+import json
+from datetime import datetime
+
+session = get_active_session()
+
+# --- Compatibility helper ---
+def safe_rerun():
+    """Handle rerun across Streamlit versions."""
+    if hasattr(st, 'rerun'):
+        st.rerun()
+    else:
+        st.experimental_rerun()
+
+# --- Page Config & Theme ---
+st.set_page_config(page_title="RegIntel Copilot", layout="wide", initial_sidebar_state="expanded")
+
+st.markdown("""
+<style>
+    [data-testid="stSidebar"] { background-color: #0F1B2D; }
+    [data-testid="stSidebar"] * { color: #E8ECF1 !important; }
+    [data-testid="stSidebar"] .stRadio label:hover { background-color: #1A2940; border-radius: 6px; }
+    .main .block-container { padding-top: 1.5rem; }
+    .stMetric { background-color: rgba(27,103,208,0.15); border-radius: 10px; padding: 12px; border-left: 4px solid #1B67D0; }
+    .banner-warning { background: rgba(249,168,37,0.15); padding: 10px 16px; border-radius: 8px; margin-bottom: 16px; border-left: 4px solid #F9A825; font-size: 0.9rem; color: #F9A825; }
+    .banner-info { background: rgba(21,101,200,0.15); padding: 10px 16px; border-radius: 8px; margin-bottom: 16px; border-left: 4px solid #4DA3FF; font-size: 0.9rem; color: #8BBFFF; }
+    .copilot-answer { background-color: rgba(255,255,255,0.05); border-radius: 10px; padding: 20px; border: 1px solid rgba(255,255,255,0.15); margin: 12px 0; }
+    .section-header { font-size: 1.1rem; font-weight: 600; color: #8BBFFF; margin: 16px 0 8px 0; border-bottom: 2px solid rgba(255,255,255,0.15); padding-bottom: 6px; }
+    .evidence-tag { display: inline-block; background: rgba(46,125,50,0.2); color: #66BB6A; padding: 2px 10px; border-radius: 12px; font-size: 0.8rem; margin: 2px; }
+    .draft-badge { display: inline-block; background: rgba(230,81,0,0.2); color: #FF8A65; padding: 4px 12px; border-radius: 6px; font-weight: 600; font-size: 0.85rem; }
+</style>
+""", unsafe_allow_html=True)
+
+# --- Sidebar ---
+st.sidebar.markdown("### RegIntel Copilot")
+st.sidebar.caption("Risk, Fraud & Regulatory Intelligence")
+st.sidebar.markdown("---")
+
+page = st.sidebar.radio("", [
+    "Copilot Chat",
+    "Executive Overview",
+    "Risk Signal Monitor",
+    "Alert Investigation",
+    "Evidence Explorer",
+    "Policy Intelligence",
+    "Case Management",
+    "Report Builder",
+    "Audit Trail",
+    "About"
+], label_visibility="collapsed")
+
+st.sidebar.markdown("---")
+st.sidebar.caption("GCC Snowflake Hackathon 2026")
+st.sidebar.caption("Synthetic Data Only")
+
+# --- Helper Functions ---
+def run_query(sql):
+    try:
+        return session.sql(sql).to_pandas()
+    except Exception as e:
+        st.error(f"Query error: {e}")
+        return None
+
+def cortex_complete(prompt, model="llama3.1-70b"):
+    try:
+        safe = prompt.replace("'", "''")
+        result = session.sql(f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', '{safe}') AS RESP").to_pandas()
+        return result['RESP'].iloc[0] if result is not None else None
+    except Exception as e:
+        st.error(f"Cortex AI error: {e}")
+        return None
+
+def gather_data_context(question, account_id=None):
+    v_context = ""
+    q_lower = question.lower()
+    if account_id and account_id.strip():
+        df = run_query(f"SELECT ALERT_ID, RULE_ID, SEVERITY, RISK_SCORE, EXPLANATION FROM REGINTEL.RISK.ALERTS WHERE ACCOUNT_ID='{account_id}' ORDER BY RISK_SCORE DESC LIMIT 10")
+        if df is not None and len(df) > 0:
+            v_context = "\n".join(f"Alert {r['ALERT_ID']} [{r['RULE_ID']} {r['SEVERITY']} score={r['RISK_SCORE']}]: {r['EXPLANATION']}" for _, r in df.iterrows())
+    elif "rapid" in q_lower or "movement" in q_lower or "fund" in q_lower:
+        df = run_query("SELECT ALERT_ID, ACCOUNT_ID, RISK_SCORE, EXPLANATION FROM REGINTEL.RISK.ALERTS WHERE RULE_ID='AML_002' ORDER BY RISK_SCORE DESC LIMIT 10")
+        if df is not None and len(df) > 0:
+            v_context = "\n".join(f"Alert {r['ALERT_ID']} Account={r['ACCOUNT_ID']} [score={r['RISK_SCORE']}]: {r['EXPLANATION']}" for _, r in df.iterrows())
+    elif "liquidity" in q_lower or "decline" in q_lower or "balance" in q_lower:
+        df = run_query("SELECT ACCOUNT_ID, BALANCE_DATE, CLOSING_BALANCE, PCT_CHANGE_7D FROM REGINTEL.RISK.V_FEAT_LIQUIDITY_DECLINE WHERE PCT_CHANGE_7D < -50 ORDER BY PCT_CHANGE_7D ASC LIMIT 10")
+        if df is not None and len(df) > 0:
+            v_context = "\n".join(f"Account {r['ACCOUNT_ID']} date={r['BALANCE_DATE']} balance={r['CLOSING_BALANCE']} change={r['PCT_CHANGE_7D']}%" for _, r in df.iterrows())
+    elif "case" in q_lower or "finding" in q_lower or "evidence" in q_lower or "missing" in q_lower:
+        df = run_query("SELECT C.CASE_ID, C.CASE_STATUS, C.ALERT_ID, COALESCE(F.FINDING_STATUS,'NONE') AS FINDING_STATUS FROM REGINTEL.CASE_MGMT.CASES C LEFT JOIN REGINTEL.CASE_MGMT.FINDINGS F ON C.CASE_ID=F.CASE_ID LIMIT 5")
+        if df is not None and len(df) > 0:
+            v_context = "\n".join(f"Case {r['CASE_ID']} status={r['CASE_STATUS']} alert={r['ALERT_ID']} finding={r['FINDING_STATUS']}" for _, r in df.iterrows())
+    elif "structur" in q_lower:
+        df = run_query("SELECT ALERT_ID, ACCOUNT_ID, RISK_SCORE, EXPLANATION FROM REGINTEL.RISK.ALERTS WHERE RULE_ID='AML_001' ORDER BY RISK_SCORE DESC LIMIT 10")
+        if df is not None and len(df) > 0:
+            v_context = "\n".join(f"Alert {r['ALERT_ID']} Account={r['ACCOUNT_ID']} [score={r['RISK_SCORE']}]: {r['EXPLANATION']}" for _, r in df.iterrows())
+    elif "mule" in q_lower or "counterpart" in q_lower:
+        df = run_query("SELECT ALERT_ID, ACCOUNT_ID, RISK_SCORE, EXPLANATION FROM REGINTEL.RISK.ALERTS WHERE RULE_ID='FRD_003' ORDER BY RISK_SCORE DESC LIMIT 10")
+        if df is not None and len(df) > 0:
+            v_context = "\n".join(f"Alert {r['ALERT_ID']} Account={r['ACCOUNT_ID']} [score={r['RISK_SCORE']}]: {r['EXPLANATION']}" for _, r in df.iterrows())
+    else:
+        df = run_query("SELECT ALERT_ID, ACCOUNT_ID, RULE_ID, RISK_SCORE, SEVERITY, EXPLANATION FROM REGINTEL.RISK.ALERTS WHERE ALERT_STATUS='NEW' ORDER BY RISK_SCORE DESC LIMIT 10")
+        if df is not None and len(df) > 0:
+            v_context = "\n".join(f"Alert {r['ALERT_ID']} Account={r['ACCOUNT_ID']} [{r['RULE_ID']} score={r['RISK_SCORE']}]: {r['EXPLANATION']}" for _, r in df.iterrows())
+    return v_context
+
+def gather_policy_context(question):
+    q_lower = question.lower()
+    words = q_lower.split()
+    kw = words[0] if words else ""
+    pdf = run_query(f"SELECT POLICY_ID, SECTION_ID, PARAGRAPH_ID, CHUNK_TEXT FROM REGINTEL.POLICY.POLICY_CHUNKS WHERE LOWER(CHUNK_TEXT) LIKE '%{kw}%' LIMIT 3")
+    if pdf is not None and len(pdf) > 0:
+        return "\n".join(f"[{r['POLICY_ID']} {r['SECTION_ID']}.{r['PARAGRAPH_ID']}]: {r['CHUNK_TEXT']}" for _, r in pdf.iterrows())
+    return ""
+
+def copilot_ask(question, account_id=None, model="llama3.1-70b", history=None):
+    v_context = gather_data_context(question, account_id)
+    v_policy = gather_policy_context(question)
+
+    history_text = ""
+    if history:
+        recent = history[-6:]
+        history_text = "\n".join(f"{m['role'].upper()}: {m['content'][:300]}" for m in recent)
+
+    prompt = f"""You are RegIntel Copilot, a compliance investigation assistant for banking risk and fraud.
+Answer ONLY based on the evidence provided. If insufficient, state that clearly.
+Include specific alert IDs, account IDs, rule IDs, risk scores, and policy references.
+Label interpretive statements as requiring human review.
+
+{"CONVERSATION HISTORY:" + chr(10) + history_text + chr(10) if history_text else ""}
+CURRENT QUESTION: {question}
+
+DATA EVIDENCE:
+{v_context or 'No data evidence found.'}
+
+POLICY EVIDENCE:
+{v_policy or 'No policy passages retrieved.'}
+
+Provide a structured answer. For follow-up questions, reference prior context from the conversation."""
+
+    return cortex_complete(prompt, model)
+
+MODEL_OPTIONS = {
+    "Fast (llama3.1-8b)": "llama3.1-8b",
+    "Standard (llama3.1-70b)": "llama3.1-70b",
+    "Advanced (llama3.3-70b)": "llama3.3-70b"
+}
+
+# ============================================================
+# PAGE: Copilot Chat (Multi-turn Conversation)
+# ============================================================
+if page == "Copilot Chat":
+    st.markdown('<div class="banner-info"><b>RegIntel Copilot</b> — AI-powered compliance investigation assistant. Ask questions and follow up naturally.</div>', unsafe_allow_html=True)
+
+    # Session state for chat history and settings
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+    if "account_context" not in st.session_state:
+        st.session_state.account_context = ""
+
+    # Top bar: model selector + account context + clear
+    top1, top2, top3 = st.columns([2, 2, 1])
+    selected_model = top1.selectbox("AI Model", list(MODEL_OPTIONS.keys()), index=1, help="Fast: quick. Standard: balanced. Advanced: complex analysis.")
+    st.session_state.account_context = top2.text_input("Account focus (optional)", value=st.session_state.account_context, placeholder="e.g., A000123", help="Set an account ID for the entire conversation")
+    if top3.button("Clear chat"):
+        st.session_state.chat_history = []
+        safe_rerun()
+
+    # Suggested questions (only show when chat is empty)
+    if not st.session_state.chat_history:
+        st.markdown("**Suggested questions:**")
+        sc1, sc2, sc3 = st.columns(3)
+        sc4, sc5, sc6 = st.columns(3)
+        presets = {
+            "Top risk alerts": "Which open alerts have the highest risk score and which rules contributed?",
+            "Why A000123 flagged?": "Why was account A000123 flagged? Show rule thresholds and observed values.",
+            "Policy: rapid movement": "What evidence is required when rapid movement of funds is detected?",
+            "Liquidity declines": "Show material liquidity declines over the last seven balance dates.",
+            "Case C000017 status": "What evidence is missing before case C000017 can be submitted for review?",
+            "Mule account patterns": "Show accounts that received funds from 3+ counterparties and moved most out within 24 hours."
+        }
+        cols = [sc1, sc2, sc3, sc4, sc5, sc6]
+        for i, (label, q) in enumerate(presets.items()):
+            if cols[i].button(label, use_container_width=True, key=f"preset_{i}"):
+                st.session_state.chat_history.append({"role": "user", "content": q})
+                acct = st.session_state.account_context if st.session_state.account_context else None
+                answer = copilot_ask(q, acct, MODEL_OPTIONS[selected_model], st.session_state.chat_history[:-1])
+                if answer:
+                    st.session_state.chat_history.append({"role": "assistant", "content": answer})
+                else:
+                    st.session_state.chat_history.append({"role": "assistant", "content": "I could not generate a response. Please try rephrasing."})
+                safe_rerun()
+
+    # Display conversation history
+    for msg in st.session_state.chat_history:
+        if msg["role"] == "user":
+            st.markdown(f'<div style="background:rgba(27,103,208,0.15);border-left:4px solid #1B67D0;border-radius:8px;padding:10px 14px;margin:6px 0;"><b>You:</b> {msg["content"]}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div style="background:rgba(255,255,255,0.05);border-left:4px solid #66BB6A;border-radius:8px;padding:10px 14px;margin:6px 0;"><b>Copilot:</b><br/>{msg["content"]}</div>', unsafe_allow_html=True)
+
+    # Chat input
+    with st.form("chat_form", clear_on_submit=True):
+        user_input = st.text_input("Ask a follow-up or new question...", key="chat_input_field", label_visibility="collapsed", placeholder="Ask a follow-up or new question...")
+        submitted = st.form_submit_button("Send")
+
+    if submitted and user_input:
+        st.session_state.chat_history.append({"role": "user", "content": user_input})
+        with st.spinner("Analyzing..."):
+            acct = st.session_state.account_context if st.session_state.account_context else None
+            answer = copilot_ask(
+                user_input,
+                acct,
+                MODEL_OPTIONS[selected_model],
+                st.session_state.chat_history[:-1]
+            )
+        if answer:
+            st.session_state.chat_history.append({"role": "assistant", "content": answer})
+        else:
+            st.session_state.chat_history.append({"role": "assistant", "content": "I could not generate a response. Please try rephrasing your question."})
+        safe_rerun()
+
+    # Footer
+    if st.session_state.chat_history:
+        st.caption(f"Model: {MODEL_OPTIONS[selected_model]} | Messages: {len(st.session_state.chat_history)} | AI-generated responses require human review")
+
+# ============================================================
+# PAGE: Executive Overview
+# ============================================================
+elif page == "Executive Overview":
+    st.markdown("## Executive Overview")
+    st.markdown('<div class="banner-warning"><b>Synthetic Data</b> — All data is fictitious. Decision support only.</div>', unsafe_allow_html=True)
+
+    col1, col2, col3, col4 = st.columns(4)
+    alerts_df = run_query("SELECT ALERT_STATUS, COUNT(*) AS CNT FROM REGINTEL.RISK.ALERTS GROUP BY ALERT_STATUS")
+    if alerts_df is not None:
+        col1.metric("Total Alerts", f"{alerts_df['CNT'].sum():,}")
+        col2.metric("New Alerts", f"{alerts_df[alerts_df['ALERT_STATUS']=='NEW']['CNT'].sum():,}")
+    cases_df = run_query("SELECT COUNT(*) AS CNT FROM REGINTEL.CASE_MGMT.CASES")
+    if cases_df is not None:
+        col3.metric("Open Cases", f"{cases_df['CNT'].iloc[0]:,}")
+    review_df = run_query("SELECT COUNT(*) AS CNT FROM REGINTEL.CASE_MGMT.CASES WHERE CASE_STATUS='REVIEW_REQUIRED'")
+    if review_df is not None:
+        col4.metric("Awaiting Review", f"{review_df['CNT'].iloc[0]:,}")
+
+    st.markdown('<div class="section-header">Alerts by Risk Domain & Severity</div>', unsafe_allow_html=True)
+    domain_df = run_query("SELECT R.RISK_DOMAIN, A.SEVERITY, COUNT(*) AS CNT FROM REGINTEL.RISK.ALERTS A JOIN REGINTEL.RISK.RISK_RULES R ON A.RULE_ID=R.RULE_ID AND A.RULE_VERSION=R.RULE_VERSION GROUP BY R.RISK_DOMAIN, A.SEVERITY ORDER BY CNT DESC")
+    if domain_df is not None:
+        st.dataframe(domain_df, use_container_width=True)
+
+    st.markdown('<div class="section-header">Top Rule Triggers</div>', unsafe_allow_html=True)
+    rules_df = run_query("SELECT A.RULE_ID, R.RULE_NAME, R.RISK_DOMAIN, COUNT(*) AS ALERT_COUNT, ROUND(AVG(A.RISK_SCORE),2) AS AVG_SCORE FROM REGINTEL.RISK.ALERTS A JOIN REGINTEL.RISK.RISK_RULES R ON A.RULE_ID=R.RULE_ID AND A.RULE_VERSION=R.RULE_VERSION GROUP BY A.RULE_ID, R.RULE_NAME, R.RISK_DOMAIN ORDER BY ALERT_COUNT DESC")
+    if rules_df is not None:
+        st.dataframe(rules_df, use_container_width=True)
+
+# ============================================================
+# PAGE: Risk Signal Monitor
+# ============================================================
+elif page == "Risk Signal Monitor":
+    st.markdown("## Risk Signal Monitor")
+    col1, col2, col3 = st.columns(3)
+    domain_f = col1.selectbox("Domain", ["ALL","AML","FRAUD","CREDIT","LIQUIDITY"])
+    severity_f = col2.selectbox("Severity", ["ALL","HIGH","MEDIUM","LOW"])
+    status_f = col3.selectbox("Status", ["ALL","NEW","UNDER_REVIEW","ESCALATED"])
+
+    clauses = []
+    if domain_f != "ALL": clauses.append(f"R.RISK_DOMAIN='{domain_f}'")
+    if severity_f != "ALL": clauses.append(f"A.SEVERITY='{severity_f}'")
+    if status_f != "ALL": clauses.append(f"A.ALERT_STATUS='{status_f}'")
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+
+    df = run_query(f"SELECT A.ALERT_ID, A.ACCOUNT_ID, A.CUSTOMER_ID, A.RULE_ID, R.RULE_NAME, R.RISK_DOMAIN, A.RISK_SCORE, A.SEVERITY, A.ALERT_STATUS, A.EXPLANATION FROM REGINTEL.RISK.ALERTS A JOIN REGINTEL.RISK.RISK_RULES R ON A.RULE_ID=R.RULE_ID AND A.RULE_VERSION=R.RULE_VERSION {where} ORDER BY A.RISK_SCORE DESC LIMIT 100")
+    if df is not None:
+        st.dataframe(df, use_container_width=True, height=500)
+
+# ============================================================
+# PAGE: Alert Investigation
+# ============================================================
+elif page == "Alert Investigation":
+    st.markdown("## Alert Investigation")
+    account_id = st.text_input("Account ID", value="A000123")
+
+    if account_id:
+        st.markdown(f'<div class="section-header">Alerts for {account_id}</div>', unsafe_allow_html=True)
+        alerts_df = run_query(f"SELECT A.ALERT_ID, A.RULE_ID, R.RULE_NAME, R.RISK_DOMAIN, A.RISK_SCORE, A.SEVERITY, A.EXPLANATION, A.ALERT_STATUS FROM REGINTEL.RISK.ALERTS A JOIN REGINTEL.RISK.RISK_RULES R ON A.RULE_ID=R.RULE_ID AND A.RULE_VERSION=R.RULE_VERSION WHERE A.ACCOUNT_ID='{account_id}' ORDER BY A.RISK_SCORE DESC")
+        if alerts_df is not None and len(alerts_df) > 0:
+            st.dataframe(alerts_df, use_container_width=True)
+
+            tab_ctx, tab_txn, tab_policy = st.tabs(["Customer & Account", "Transactions", "Policy Evidence"])
+            with tab_ctx:
+                ctx_df = run_query(f"SELECT C.CUSTOMER_ID, C.CUSTOMER_TYPE, C.RISK_RATING, C.KYC_STATUS, C.COUNTRY_CODE, A.ACCOUNT_TYPE, A.ACCOUNT_STATUS, A.CURRENT_BALANCE, A.CREDIT_LIMIT FROM REGINTEL.CURATED.V_ACCOUNTS A JOIN REGINTEL.CURATED.V_CUSTOMERS C ON A.CUSTOMER_ID=C.CUSTOMER_ID WHERE A.ACCOUNT_ID='{account_id}'")
+                if ctx_df is not None: st.dataframe(ctx_df, use_container_width=True)
+            with tab_txn:
+                txn_df = run_query(f"SELECT TRANSACTION_ID, TRANSACTION_TIMESTAMP, TRANSACTION_TYPE, CHANNEL, AMOUNT, ORIGIN_COUNTRY_CODE, DESTINATION_COUNTRY_CODE, DESCRIPTION FROM REGINTEL.CURATED.V_TRANSACTIONS WHERE ACCOUNT_ID='{account_id}' ORDER BY TRANSACTION_TIMESTAMP DESC LIMIT 20")
+                if txn_df is not None: st.dataframe(txn_df, use_container_width=True)
+            with tab_policy:
+                if len(alerts_df) > 0:
+                    rule_name = alerts_df['RULE_NAME'].iloc[0]
+                    kw = rule_name.split()[0].lower()
+                    pol_df = run_query(f"SELECT POLICY_ID, SECTION_ID, PARAGRAPH_ID, SOURCE_FILENAME, CHUNK_TEXT FROM REGINTEL.POLICY.POLICY_CHUNKS WHERE LOWER(CHUNK_TEXT) LIKE '%{kw}%' LIMIT 5")
+                    if pol_df is not None and len(pol_df) > 0:
+                        st.dataframe(pol_df, use_container_width=True)
+                    else:
+                        st.info("No policy passages found.")
+        else:
+            st.info(f"No alerts for {account_id}")
+
+# ============================================================
+# PAGE: Evidence Explorer
+# ============================================================
+elif page == "Evidence Explorer":
+    st.markdown("## Evidence Explorer")
+    alert_id = st.text_input("Alert ID", placeholder="e.g., ALT_000268")
+    if alert_id:
+        ev_df = run_query(f"SELECT EVIDENCE_ID, EVIDENCE_TYPE, SOURCE_OBJECT, SOURCE_RECORD_ID, EVIDENCE_TIMESTAMP, HASH_VALUE FROM REGINTEL.RISK.ALERT_EVIDENCE WHERE ALERT_ID='{alert_id}' ORDER BY EVIDENCE_TIMESTAMP")
+        if ev_df is not None and len(ev_df) > 0:
+            st.dataframe(ev_df, use_container_width=True)
+            sel = st.selectbox("Inspect evidence", ev_df['EVIDENCE_ID'].tolist())
+            if sel:
+                detail = run_query(f"SELECT EVIDENCE_JSON FROM REGINTEL.RISK.ALERT_EVIDENCE WHERE EVIDENCE_ID='{sel}'")
+                if detail is not None: st.json(json.loads(detail['EVIDENCE_JSON'].iloc[0]))
+        else:
+            st.info("No evidence found.")
+
+# ============================================================
+# PAGE: Policy Intelligence
+# ============================================================
+elif page == "Policy Intelligence":
+    st.markdown("## Policy Intelligence")
+    st.markdown("Semantic search over policy documents using **Cortex Search Service**.")
+    query = st.text_input("Search policies", placeholder="e.g., What evidence is required when rapid movement of funds is detected?")
+    if query:
+        try:
+            import _snowflake
+            svc = _snowflake.get_cortex_search_service("REGINTEL", "POLICY", "POLICY_SEARCH_SVC")
+            resp = svc.search(query, ["POLICY_ID","POLICY_VERSION","SECTION_ID","PARAGRAPH_ID","SOURCE_FILENAME","CHUNK_TEXT"], limit=5)
+            import pandas as pd
+            results = resp.json()
+            if "results" in results and len(results["results"]) > 0:
+                for r in results["results"]:
+                    with st.expander(f"{r.get('POLICY_ID','N/A')} — {r.get('SECTION_ID','')}.{r.get('PARAGRAPH_ID','')}"):
+                        st.markdown(f"**Source:** {r.get('SOURCE_FILENAME','')}")
+                        st.markdown(f"---\n{r.get('CHUNK_TEXT','')}")
+            else:
+                st.info("No results found.")
+        except Exception:
+            pol_df = run_query(f"SELECT POLICY_ID, SECTION_ID, PARAGRAPH_ID, SOURCE_FILENAME, CHUNK_TEXT FROM REGINTEL.POLICY.POLICY_CHUNKS WHERE LOWER(CHUNK_TEXT) LIKE '%{query.split()[0].lower() if query.split() else ''}%' LIMIT 5")
+            if pol_df is not None and len(pol_df) > 0:
+                for _, r in pol_df.iterrows():
+                    with st.expander(f"{r['POLICY_ID']} — {r['SECTION_ID']}.{r['PARAGRAPH_ID']}"):
+                        st.markdown(f"**Source:** {r['SOURCE_FILENAME']}\n---\n{r['CHUNK_TEXT']}")
+
+    st.markdown('<div class="section-header">All Policy Documents</div>', unsafe_allow_html=True)
+    docs_df = run_query("SELECT POLICY_ID, POLICY_NAME, POLICY_VERSION, EFFECTIVE_DATE, SOURCE_FILENAME FROM REGINTEL.POLICY.POLICY_DOCUMENTS")
+    if docs_df is not None: st.dataframe(docs_df, use_container_width=True)
+
+# ============================================================
+# PAGE: Case Management
+# ============================================================
+elif page == "Case Management":
+    st.markdown("## Case Management")
+    tab1, tab2, tab3 = st.tabs(["Open Cases", "Review Queue", "Case Detail"])
+
+    with tab1:
+        df = run_query("SELECT CASE_ID, ALERT_ID, CASE_STATUS, RULE_ID, RISK_SCORE, SEVERITY, CREATED_BY, CREATED_AT FROM REGINTEL.CASE_MGMT.V_OPEN_CASES ORDER BY RISK_SCORE DESC")
+        if df is not None: st.dataframe(df, use_container_width=True)
+    with tab2:
+        df = run_query("SELECT CASE_ID, ALERT_ID, CASE_STATUS, RULE_ID, RISK_SCORE, SEVERITY FROM REGINTEL.CASE_MGMT.V_CASES_AWAITING_REVIEW")
+        if df is not None and len(df) > 0: st.dataframe(df, use_container_width=True)
+        else: st.info("No cases awaiting review.")
+    with tab3:
+        case_id = st.text_input("Case ID", value="C000017")
+        if case_id:
+            detail = run_query(f"SELECT C.CASE_ID, C.CASE_STATUS, C.ALERT_ID, C.CREATED_BY, C.CREATED_AT, A.RULE_ID, A.RISK_SCORE, A.SEVERITY, A.EXPLANATION FROM REGINTEL.CASE_MGMT.CASES C JOIN REGINTEL.RISK.ALERTS A ON C.ALERT_ID=A.ALERT_ID WHERE C.CASE_ID='{case_id}'")
+            if detail is not None and len(detail) > 0:
+                st.dataframe(detail, use_container_width=True)
+
+                st.markdown('<div class="section-header">Evidence</div>', unsafe_allow_html=True)
+                ev = run_query(f"SELECT CE.EVIDENCE_ID, AE.EVIDENCE_TYPE, AE.SOURCE_OBJECT, AE.HASH_VALUE FROM REGINTEL.CASE_MGMT.CASE_EVIDENCE CE JOIN REGINTEL.RISK.ALERT_EVIDENCE AE ON CE.EVIDENCE_ID=AE.EVIDENCE_ID WHERE CE.CASE_ID='{case_id}'")
+                if ev is not None: st.dataframe(ev, use_container_width=True)
+
+                st.markdown('<div class="section-header">Findings</div>', unsafe_allow_html=True)
+                fd = run_query(f"SELECT FINDING_ID, FINDING_VERSION, FINDING_STATUS, NARRATIVE, CREATED_BY, CREATED_AT, APPROVED_BY, APPROVED_AT FROM REGINTEL.CASE_MGMT.FINDINGS WHERE CASE_ID='{case_id}' ORDER BY FINDING_VERSION DESC")
+                if fd is not None and len(fd) > 0: st.dataframe(fd, use_container_width=True)
+
+                st.markdown('<div class="section-header">Timeline</div>', unsafe_allow_html=True)
+                tl = run_query(f"SELECT EVENT_TIMESTAMP, USER_NAME, ACTION_TYPE, REQUEST_TEXT, STATUS FROM REGINTEL.AUDIT.ACTIVITY_LOG WHERE OBJECT_ID='{case_id}' ORDER BY EVENT_TIMESTAMP")
+                if tl is not None: st.dataframe(tl, use_container_width=True)
+
+                st.markdown('<div class="section-header">AI Finding Generator</div>', unsafe_allow_html=True)
+                model_choice = st.selectbox("Model for narrative", list(MODEL_OPTIONS.keys()), index=1, key="finding_model")
+                if st.button("Generate Draft Finding with Cortex AI"):
+                    with st.spinner("Generating..."):
+                        try:
+                            nr = session.sql(f"CALL REGINTEL.APP.GENERATE_FINDING_NARRATIVE('{case_id}')").to_pandas()
+                            if nr is not None and len(nr) > 0:
+                                raw = json.loads(nr.iloc[0, 0]) if isinstance(nr.iloc[0, 0], str) else nr.iloc[0, 0]
+                                st.markdown(f'<span class="draft-badge">DRAFT — Machine Generated</span>', unsafe_allow_html=True)
+                                st.markdown(raw.get('narrative', 'No narrative generated.'))
+                                st.caption(raw.get('disclaimer', ''))
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+
+# ============================================================
+# PAGE: Report Builder
+# ============================================================
+elif page == "Report Builder":
+    st.markdown("## Investigation Report Builder")
+    case_id = st.text_input("Case ID for report", value="C000017")
+    if st.button("Generate Report") and case_id:
+        rpt = run_query(f"SELECT C.CASE_ID, C.CASE_STATUS, C.CREATED_BY, C.CREATED_AT, A.ALERT_ID, A.RULE_ID, R.RULE_NAME, R.RISK_DOMAIN, A.RISK_SCORE, A.SEVERITY, A.EXPLANATION, F.FINDING_ID, F.FINDING_VERSION, F.FINDING_STATUS, F.NARRATIVE, F.POLICY_CITATIONS_JSON, F.APPROVED_BY, F.APPROVED_AT FROM REGINTEL.CASE_MGMT.CASES C JOIN REGINTEL.RISK.ALERTS A ON C.ALERT_ID=A.ALERT_ID JOIN REGINTEL.RISK.RISK_RULES R ON A.RULE_ID=R.RULE_ID LEFT JOIN REGINTEL.CASE_MGMT.FINDINGS F ON C.CASE_ID=F.CASE_ID WHERE C.CASE_ID='{case_id}' ORDER BY F.FINDING_VERSION DESC LIMIT 1")
+        if rpt is not None and len(rpt) > 0:
+            r = rpt.iloc[0]
+            is_draft = r.get('FINDING_STATUS','DRAFT') != 'APPROVED'
+            st.markdown(f'<span class="draft-badge">{"DRAFT — NOT APPROVED" if is_draft else "APPROVED"}</span>', unsafe_allow_html=True)
+            st.markdown(f"## RegIntel Investigation Report")
+            st.markdown(f"**Case:** {r['CASE_ID']} | **Status:** {r['CASE_STATUS']} | **Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+            st.markdown(f"### Risk Signal\n- **Alert:** {r['ALERT_ID']}\n- **Rule:** {r['RULE_ID']} — {r['RULE_NAME']} ({r['RISK_DOMAIN']})\n- **Score:** {r['RISK_SCORE']} | **Severity:** {r['SEVERITY']}\n- **Explanation:** {r['EXPLANATION']}")
+            if r.get('NARRATIVE'): st.markdown(f"### Finding\n{r['NARRATIVE']}")
+            if r.get('POLICY_CITATIONS_JSON'):
+                st.markdown("### Policy Citations")
+                try:
+                    for c in json.loads(r['POLICY_CITATIONS_JSON']):
+                        st.markdown(f"- {c.get('policy_id','N/A')} Section {c.get('section','N/A')}")
+                except: st.text(str(r['POLICY_CITATIONS_JSON']))
+            ev = run_query(f"SELECT CE.EVIDENCE_ID, AE.EVIDENCE_TYPE, AE.SOURCE_OBJECT, AE.SOURCE_RECORD_ID, AE.HASH_VALUE FROM REGINTEL.CASE_MGMT.CASE_EVIDENCE CE JOIN REGINTEL.RISK.ALERT_EVIDENCE AE ON CE.EVIDENCE_ID=AE.EVIDENCE_ID WHERE CE.CASE_ID='{case_id}'")
+            if ev is not None:
+                st.markdown("### Evidence")
+                st.dataframe(ev, use_container_width=True)
+            st.markdown("### Limitations\n- Synthetic hackathon data only\n- AI narrative is DRAFT until human approval\n- Policy citations from indexed synthetic documents only")
+
+# ============================================================
+# PAGE: Audit Trail
+# ============================================================
+elif page == "Audit Trail":
+    st.markdown("## Audit Trail")
+    df = run_query("SELECT ACTIVITY_ID, EVENT_TIMESTAMP, USER_NAME, ACTION_TYPE, OBJECT_TYPE, OBJECT_ID, REQUEST_TEXT, STATUS FROM REGINTEL.AUDIT.V_AUDIT_TRAIL LIMIT 100")
+    if df is not None: st.dataframe(df, use_container_width=True, height=500)
+
+# ============================================================
+# PAGE: About
+# ============================================================
+elif page == "About":
+    st.markdown("## About RegIntel Copilot")
+    st.markdown("""
+**RegIntel Copilot** is a hackathon demonstration of a Risk, Fraud and Regulatory Intelligence Copilot built entirely on Snowflake.
+
+### Cortex AI Integration
+
+| Feature | Service | Purpose |
+|---|---|---|
+| **Copilot Chat** | `CORTEX.COMPLETE` | Natural language Q&A grounded in data + policy evidence |
+| **Policy Search** | `CORTEX SEARCH SERVICE` | Semantic retrieval over policy documents |
+| **Finding Generator** | `CORTEX.COMPLETE` | Draft investigation narratives from evidence |
+| **Semantic View** | `REGINTEL_SEMANTIC_VIEW` | Structured data model for Cortex Analyst |
+| **Cortex Agent** | `REGINTEL_AGENT` | Unified agent with Analyst + Search tools |
+
+### Model Switching
+- **Fast** (llama3.1-8b): Quick answers, lower latency
+- **Standard** (llama3.1-70b): Balanced quality and speed
+- **Advanced** (llama3.3-70b): Best quality for complex analysis
+
+### Architecture
+- **9 deterministic SQL rules** across AML, Fraud, Credit, Liquidity
+- **776 alerts** with **916 evidence records**
+- **22 indexed policy chunks** across 4 policy documents
+- **Full case lifecycle** with audit trail
+- **6 RBAC roles** with least-privilege access
+
+### Key Controls
+- Risk scores from SQL rules only — not AI
+- AI answers grounded in actual data + indexed policies
+- Findings labeled DRAFT until human approval
+- Evidence immutable with SHA-256 hashes
+- Full audit trail including copilot queries
+""")

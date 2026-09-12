@@ -1,0 +1,7 @@
+version: 1
+artifacts:
+  - path: ..\regintel-copilot\REGINTEL_SEMANTIC_VIEW.sv.yaml
+    type: semantic_view
+    targets:
+      default:
+        object: REGINTEL.APP.REGINTEL_SEMANTIC_VIEW
