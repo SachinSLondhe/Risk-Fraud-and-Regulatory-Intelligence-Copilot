@@ -1,0 +1,137 @@
+-- =============================================================================
+-- TEST SUITE: Case Workflow Tests
+-- Database: REGINTEL
+-- Description: Validates case management tables, procedures, views, and audit
+--              trail functionality.
+-- =============================================================================
+
+USE DATABASE REGINTEL;
+USE SCHEMA PUBLIC;
+
+-- CASES table has records
+SELECT 'CASES_HAS_RECORDS' AS test_name,
+       CASE WHEN cnt > 0 THEN 'PASS' ELSE 'FAIL' END AS status,
+       cnt::STRING || ' rows in CASES' AS details
+  FROM (SELECT COUNT(*) AS cnt FROM CASES)
+
+UNION ALL
+
+-- Case C000017 exists
+SELECT 'CASE_C000017_EXISTS',
+       CASE WHEN cnt = 1 THEN 'PASS' ELSE 'FAIL' END,
+       CASE WHEN cnt = 1 THEN 'Case C000017 found' ELSE 'Case C000017 NOT found' END
+  FROM (SELECT COUNT(*) AS cnt FROM CASES WHERE CASE_ID = 'C000017')
+
+UNION ALL
+
+-- Case C000017 has expected status (not NULL)
+SELECT 'CASE_C000017_HAS_STATUS',
+       CASE WHEN s IS NOT NULL AND TRIM(s) != '' THEN 'PASS' ELSE 'FAIL' END,
+       'C000017 status: ' || COALESCE(s, 'NULL')
+  FROM (SELECT MAX(STATUS) AS s FROM CASES WHERE CASE_ID = 'C000017')
+
+UNION ALL
+
+-- FINDINGS table has a draft finding linked to a case
+SELECT 'FINDINGS_DRAFT_EXISTS',
+       CASE WHEN cnt > 0 THEN 'PASS' ELSE 'FAIL' END,
+       cnt::STRING || ' draft findings linked to cases'
+  FROM (SELECT COUNT(*) AS cnt
+          FROM FINDINGS f
+          JOIN CASES c ON f.CASE_ID = c.CASE_ID
+         WHERE f.STATUS = 'DRAFT')
+
+UNION ALL
+
+-- CASE_EVIDENCE links exist
+SELECT 'CASE_EVIDENCE_EXISTS',
+       CASE WHEN cnt > 0 THEN 'PASS' ELSE 'FAIL' END,
+       cnt::STRING || ' rows in CASE_EVIDENCE'
+  FROM (SELECT COUNT(*) AS cnt FROM CASE_EVIDENCE)
+
+UNION ALL
+
+-- Procedure OPEN_CASE exists
+SELECT 'PROC_OPEN_CASE_EXISTS',
+       CASE WHEN cnt > 0 THEN 'PASS' ELSE 'FAIL' END,
+       CASE WHEN cnt > 0 THEN 'OPEN_CASE procedure found' ELSE 'OPEN_CASE procedure NOT found' END
+  FROM (SELECT COUNT(*) AS cnt
+          FROM INFORMATION_SCHEMA.PROCEDURES
+         WHERE PROCEDURE_NAME = 'OPEN_CASE'
+           AND PROCEDURE_SCHEMA = 'PUBLIC')
+
+UNION ALL
+
+-- Procedure UPDATE_CASE_STATUS exists
+SELECT 'PROC_UPDATE_CASE_STATUS_EXISTS',
+       CASE WHEN cnt > 0 THEN 'PASS' ELSE 'FAIL' END,
+       CASE WHEN cnt > 0 THEN 'UPDATE_CASE_STATUS procedure found' ELSE 'UPDATE_CASE_STATUS procedure NOT found' END
+  FROM (SELECT COUNT(*) AS cnt
+          FROM INFORMATION_SCHEMA.PROCEDURES
+         WHERE PROCEDURE_NAME = 'UPDATE_CASE_STATUS'
+           AND PROCEDURE_SCHEMA = 'PUBLIC')
+
+UNION ALL
+
+-- Procedure CREATE_FINDING exists
+SELECT 'PROC_CREATE_FINDING_EXISTS',
+       CASE WHEN cnt > 0 THEN 'PASS' ELSE 'FAIL' END,
+       CASE WHEN cnt > 0 THEN 'CREATE_FINDING procedure found' ELSE 'CREATE_FINDING procedure NOT found' END
+  FROM (SELECT COUNT(*) AS cnt
+          FROM INFORMATION_SCHEMA.PROCEDURES
+         WHERE PROCEDURE_NAME = 'CREATE_FINDING'
+           AND PROCEDURE_SCHEMA = 'PUBLIC')
+
+UNION ALL
+
+-- Procedure REVIEW_FINDING exists
+SELECT 'PROC_REVIEW_FINDING_EXISTS',
+       CASE WHEN cnt > 0 THEN 'PASS' ELSE 'FAIL' END,
+       CASE WHEN cnt > 0 THEN 'REVIEW_FINDING procedure found' ELSE 'REVIEW_FINDING procedure NOT found' END
+  FROM (SELECT COUNT(*) AS cnt
+          FROM INFORMATION_SCHEMA.PROCEDURES
+         WHERE PROCEDURE_NAME = 'REVIEW_FINDING'
+           AND PROCEDURE_SCHEMA = 'PUBLIC')
+
+UNION ALL
+
+-- View V_OPEN_CASES exists
+SELECT 'VIEW_V_OPEN_CASES_EXISTS',
+       CASE WHEN cnt > 0 THEN 'PASS' ELSE 'FAIL' END,
+       CASE WHEN cnt > 0 THEN 'V_OPEN_CASES view found' ELSE 'V_OPEN_CASES view NOT found' END
+  FROM (SELECT COUNT(*) AS cnt
+          FROM INFORMATION_SCHEMA.VIEWS
+         WHERE TABLE_NAME = 'V_OPEN_CASES'
+           AND TABLE_SCHEMA = 'PUBLIC')
+
+UNION ALL
+
+-- View V_CASES_AWAITING_REVIEW exists
+SELECT 'VIEW_V_CASES_AWAITING_REVIEW_EXISTS',
+       CASE WHEN cnt > 0 THEN 'PASS' ELSE 'FAIL' END,
+       CASE WHEN cnt > 0 THEN 'V_CASES_AWAITING_REVIEW view found' ELSE 'V_CASES_AWAITING_REVIEW view NOT found' END
+  FROM (SELECT COUNT(*) AS cnt
+          FROM INFORMATION_SCHEMA.VIEWS
+         WHERE TABLE_NAME = 'V_CASES_AWAITING_REVIEW'
+           AND TABLE_SCHEMA = 'PUBLIC')
+
+UNION ALL
+
+-- View V_CASE_TIMELINE exists
+SELECT 'VIEW_V_CASE_TIMELINE_EXISTS',
+       CASE WHEN cnt > 0 THEN 'PASS' ELSE 'FAIL' END,
+       CASE WHEN cnt > 0 THEN 'V_CASE_TIMELINE view found' ELSE 'V_CASE_TIMELINE view NOT found' END
+  FROM (SELECT COUNT(*) AS cnt
+          FROM INFORMATION_SCHEMA.VIEWS
+         WHERE TABLE_NAME = 'V_CASE_TIMELINE'
+           AND TABLE_SCHEMA = 'PUBLIC')
+
+UNION ALL
+
+-- Audit trail has entries in ACTIVITY_LOG
+SELECT 'ACTIVITY_LOG_HAS_ENTRIES',
+       CASE WHEN cnt > 0 THEN 'PASS' ELSE 'FAIL' END,
+       cnt::STRING || ' entries in ACTIVITY_LOG'
+  FROM (SELECT COUNT(*) AS cnt FROM ACTIVITY_LOG)
+
+ORDER BY test_name;

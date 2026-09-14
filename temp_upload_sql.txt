@@ -1,4 +1,4 @@
-"""
+CALL REGINTEL.APP.UPLOAD_STREAMLIT_FROM_CONTENT($$"""
 RegIntel Copilot - Risk, Fraud and Regulatory Intelligence Copilot
 Streamlit in Snowflake application with Cortex AI integration.
 """
@@ -540,3 +540,4 @@ elif page == "About":
 - Evidence immutable with SHA-256 hashes
 - Full audit trail including copilot queries
 """)
+$$)
